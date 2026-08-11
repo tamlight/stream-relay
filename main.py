@@ -82,10 +82,12 @@ def start_ffmpeg(rtmp):
 
 
 class HealthHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
+    def any_method(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"ok")
+
+    do_GET = do_HEAD = do_POST = do_PUT = do_DELETE = do_OPTIONS = any_method
 
     def log_message(self, *args):
         pass
