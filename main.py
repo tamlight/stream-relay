@@ -27,6 +27,7 @@ FFMPEG_LOGLEVEL = os.environ.get("FFMPEG_LOGLEVEL", "info")
 MIN_WAIT_SEC = int(os.environ.get("MIN_WAIT_SEC", "15"))
 MAX_WAIT_SEC = int(os.environ.get("MAX_WAIT_SEC", "300"))
 BACKOFF_MAX = int(os.environ.get("BACKOFF_MAX", "60"))
+MIN_BACKOFF = int(os.environ.get("MIN_BACKOFF", "3"))
 RESTART_MINUTES = int(os.environ.get("RESTART_MINUTES", "45"))
 STALL_SECONDS = int(os.environ.get("STALL_SECONDS", "60"))
 DELAY_SECONDS = int(os.environ.get("DELAY_SECONDS", "0"))
@@ -49,7 +50,7 @@ def fetch_headers():
 def is_live():
     try:
         req = urllib.request.Request(SOURCE_URL, headers=fetch_headers())
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             return resp.status == 200
     except Exception as exc:
         log(f"source check failed: {exc}")
@@ -161,7 +162,7 @@ def main():
     if SELF_URL:
         threading.Thread(target=self_ping, daemon=True).start()
 
-    backoff = 5
+    backoff = MIN_BACKOFF
     offline_wait = MIN_WAIT_SEC
     while not stop.is_set():
         if not is_live():
