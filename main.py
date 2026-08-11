@@ -1,5 +1,6 @@
 import http.server
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -9,7 +10,7 @@ import urllib.request
 
 SOURCE_URL = os.environ.get(
     "SOURCE_URL",
-    "https://agmipocq.live.captain.vpplayer.net/hub/D188B8A9-8433-4A86-95FB-DB6BCAEC9BFA/tracks-v2a1/mono.ts.m3u8",
+    "https://agmipocq.live.captain.vpplayer.net/hub/D188B8A9-8433-4A86-95FB-DB6BCAEC9BFA/tracks-v3a1/mono.ts.m3u8",
 )
 RTMP_URL = os.environ.get("RTMP_URL", "")
 STREAM_KEY = os.environ.get("STREAM_KEY", "")
@@ -26,6 +27,8 @@ MIN_WAIT_SEC = int(os.environ.get("MIN_WAIT_SEC", "15"))
 MAX_WAIT_SEC = int(os.environ.get("MAX_WAIT_SEC", "300"))
 BACKOFF_MAX = int(os.environ.get("BACKOFF_MAX", "60"))
 RESTART_MINUTES = int(os.environ.get("RESTART_MINUTES", "45"))
+STALL_SECONDS = int(os.environ.get("STALL_SECONDS", "60"))
+TIME_RE = re.compile(rb"time=\s*\d+:\d+:\d+(\.\d+)?")
 HEARTBEAT_PORT = int(os.environ.get("HEARTBEAT_PORT") or os.environ.get("PORT") or "0")
 SELF_URL = os.environ.get("SELF_URL", "")
 
@@ -90,7 +93,17 @@ def start_ffmpeg(rtmp):
         rtmp,
     ]
     log("starting ffmpeg: " + " ".join(cmd))
-    return subprocess.Popen(cmd)
+    return subprocess.Popen(cmd, stderr=subprocess.PIPE)
+
+
+def monitor_progress(proc, stall_event):
+    last = time.monotonic()
+    for line in proc.stderr:
+        if TIME_RE.search(line):
+            last = time.monotonic()
+        elif not stall_event.is_set() and time.monotonic() - last > STALL_SECONDS:
+            stall_event.set()
+    return
 
 
 class HealthHandler(http.server.BaseHTTPRequestHandler):
@@ -149,9 +162,16 @@ def main():
         offline_wait = MIN_WAIT_SEC
         proc = start_ffmpeg(rtmp)
         started = time.monotonic()
+        stalled = threading.Event()
+        threading.Thread(target=monitor_progress, args=(proc, stalled), daemon=True).start()
         while proc.poll() is None and not stop.is_set():
-            stop.wait(5)
-            if stop.is_set():
+            if stalled.wait(5):
+                log(f"no ffmpeg progress for {STALL_SECONDS}s, restarting")
+                proc.terminate()
+                try:
+                    proc.wait(30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
                 break
             if RESTART_MINUTES and time.monotonic() - started > RESTART_MINUTES * 60:
                 log(f"scheduled restart after {RESTART_MINUTES} minutes")
