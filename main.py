@@ -9,7 +9,7 @@ import urllib.request
 
 SOURCE_URL = os.environ.get(
     "SOURCE_URL",
-    "https://cdn.vpplayer.tech/agmipocq/hub/D188B8A9-8433-4A86-95FB-DB6BCAEC9BFA/index.m3u8",
+    "https://agmipocq.live.captain.vpplayer.net/hub/D188B8A9-8433-4A86-95FB-DB6BCAEC9BFA/tracks-v2a1/mono.ts.m3u8",
 )
 RTMP_URL = os.environ.get("RTMP_URL", "")
 STREAM_KEY = os.environ.get("STREAM_KEY", "")
@@ -24,6 +24,7 @@ FFMPEG = os.environ.get("FFMPEG_PATH", "ffmpeg")
 FFMPEG_LOGLEVEL = os.environ.get("FFMPEG_LOGLEVEL", "info")
 CHECK_SEC = int(os.environ.get("CHECK_SEC", "30"))
 BACKOFF_MAX = int(os.environ.get("BACKOFF_MAX", "60"))
+RESTART_MINUTES = int(os.environ.get("RESTART_MINUTES", "45"))
 HEARTBEAT_PORT = int(os.environ.get("HEARTBEAT_PORT") or os.environ.get("PORT") or "0")
 SELF_URL = os.environ.get("SELF_URL", "")
 
@@ -65,6 +66,16 @@ def start_ffmpeg(rtmp):
         USER_AGENT,
         "-headers",
         f"Referer: {REFERER}\r\n",
+        "-rw_timeout",
+        "15000000",
+        "-reconnect",
+        "1",
+        "-reconnect_streamed",
+        "1",
+        "-reconnect_delay_max",
+        "10",
+        "-live_start_index",
+        "-3",
         "-fflags",
         "+genpts",
         "-i",
@@ -132,8 +143,19 @@ def main():
             continue
 
         proc = start_ffmpeg(rtmp)
+        started = time.monotonic()
         while proc.poll() is None and not stop.is_set():
             stop.wait(5)
+            if stop.is_set():
+                break
+            if RESTART_MINUTES and time.monotonic() - started > RESTART_MINUTES * 60:
+                log(f"scheduled restart after {RESTART_MINUTES} minutes")
+                proc.terminate()
+                try:
+                    proc.wait(30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                break
 
         if stop.is_set():
             proc.terminate()
