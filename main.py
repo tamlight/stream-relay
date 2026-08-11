@@ -10,7 +10,7 @@ import urllib.request
 
 SOURCE_URL = os.environ.get(
     "SOURCE_URL",
-    "https://agmipocq.live.captain.vpplayer.net/hub/D188B8A9-8433-4A86-95FB-DB6BCAEC9BFA/tracks-v3a1/mono.ts.m3u8",
+    "https://agmipocq.live.captain.vpplayer.net/hub/D188B8A9-8433-4A86-95FB-DB6BCAEC9BFA/tracks-v2a1/mono.ts.m3u8",
 )
 RTMP_URL = os.environ.get("RTMP_URL", "")
 STREAM_KEY = os.environ.get("STREAM_KEY", "")
