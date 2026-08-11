@@ -99,6 +99,8 @@ def start_ffmpeg(rtmp):
 def monitor_progress(proc, stall_event):
     last = time.monotonic()
     for line in proc.stderr:
+        sys.stdout.buffer.write(line)
+        sys.stdout.buffer.flush()
         if TIME_RE.search(line):
             last = time.monotonic()
         elif not stall_event.is_set() and time.monotonic() - last > STALL_SECONDS:
