@@ -1,4 +1,5 @@
 import http.server
+import math
 import os
 import re
 import signal
@@ -28,6 +29,8 @@ MAX_WAIT_SEC = int(os.environ.get("MAX_WAIT_SEC", "300"))
 BACKOFF_MAX = int(os.environ.get("BACKOFF_MAX", "60"))
 RESTART_MINUTES = int(os.environ.get("RESTART_MINUTES", "45"))
 STALL_SECONDS = int(os.environ.get("STALL_SECONDS", "60"))
+DELAY_SECONDS = int(os.environ.get("DELAY_SECONDS", "0"))
+SEGMENT_DURATION = 4.2
 TIME_RE = re.compile(rb"time=\s*\d+:\d+:\d+(\.\d+)?")
 HEARTBEAT_PORT = int(os.environ.get("HEARTBEAT_PORT") or os.environ.get("PORT") or "0")
 SELF_URL = os.environ.get("SELF_URL", "")
@@ -78,8 +81,14 @@ def start_ffmpeg(rtmp):
         "1",
         "-reconnect_delay_max",
         "10",
-        "-live_start_index",
-        "-3",
+    ]
+    if DELAY_SECONDS > 0:
+        segments = max(1, int(math.ceil(DELAY_SECONDS / SEGMENT_DURATION)))
+        cmd += ["-re", "-live_start_index", f"-{segments}"]
+        log(f"output delay enabled: ~{segments * SEGMENT_DURATION:.0f}s ({DELAY_SECONDS}s requested)")
+    else:
+        cmd += ["-live_start_index", "-3"]
+    cmd += [
         "-fflags",
         "+genpts",
         "-i",
