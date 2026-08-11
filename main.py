@@ -22,7 +22,8 @@ USER_AGENT = os.environ.get(
 )
 FFMPEG = os.environ.get("FFMPEG_PATH", "ffmpeg")
 FFMPEG_LOGLEVEL = os.environ.get("FFMPEG_LOGLEVEL", "info")
-CHECK_SEC = int(os.environ.get("CHECK_SEC", "30"))
+MIN_WAIT_SEC = int(os.environ.get("MIN_WAIT_SEC", "15"))
+MAX_WAIT_SEC = int(os.environ.get("MAX_WAIT_SEC", "300"))
 BACKOFF_MAX = int(os.environ.get("BACKOFF_MAX", "60"))
 RESTART_MINUTES = int(os.environ.get("RESTART_MINUTES", "45"))
 HEARTBEAT_PORT = int(os.environ.get("HEARTBEAT_PORT") or os.environ.get("PORT") or "0")
@@ -136,12 +137,15 @@ def main():
         threading.Thread(target=self_ping, daemon=True).start()
 
     backoff = 5
+    offline_wait = MIN_WAIT_SEC
     while not stop.is_set():
         if not is_live():
-            log(f"source offline, retry in {CHECK_SEC}s")
-            stop.wait(CHECK_SEC)
+            log(f"source offline, reconnect attempt in {offline_wait}s")
+            stop.wait(offline_wait)
+            offline_wait = min(offline_wait * 2, MAX_WAIT_SEC)
             continue
 
+        offline_wait = MIN_WAIT_SEC
         proc = start_ffmpeg(rtmp)
         started = time.monotonic()
         while proc.poll() is None and not stop.is_set():
