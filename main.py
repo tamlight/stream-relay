@@ -128,6 +128,7 @@ def main():
         log("RTMP_URL is required")
         sys.exit(1)
 
+    log(f"source: {SOURCE_URL}")
     rtmp = build_rtmp()
 
     if HEARTBEAT_PORT:
