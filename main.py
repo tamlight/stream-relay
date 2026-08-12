@@ -106,16 +106,72 @@ def start_ffmpeg(rtmp):
     return subprocess.Popen(cmd, stderr=subprocess.PIPE)
 
 
-def monitor_progress(proc, stall_event):
+def monitor_progress(proc, stall_event, progress_event):
     last = time.monotonic()
     for line in proc.stderr:
         sys.stdout.buffer.write(line)
         sys.stdout.buffer.flush()
         if TIME_RE.search(line):
             last = time.monotonic()
+            if not progress_event.is_set():
+                progress_event.set()
         elif not stall_event.is_set() and time.monotonic() - last > STALL_SECONDS:
             stall_event.set()
     return
+
+
+def stop_proc(proc, label):
+    if proc is None or proc.poll() is not None:
+        return
+    log(f"stopping {label}")
+    proc.terminate()
+    try:
+        proc.wait(30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def start_fallback(rtmp):
+    cmd = [
+        FFMPEG,
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=black:s=1280x720:r=30",
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=r=48000:cl=stereo",
+        "-tune",
+        "zerolatency",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-b:v",
+        "800k",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "96k",
+        "-f",
+        "flv",
+        rtmp,
+    ]
+    log("starting fallback (black screen) on same ingest")
+    return subprocess.Popen(cmd, stderr=subprocess.PIPE)
+
+
+def ensure_fallback(fallback, rtmp):
+    if fallback is None or fallback.poll() is not None:
+        return start_fallback(rtmp)
+    return fallback
 
 
 class HealthHandler(http.server.BaseHTTPRequestHandler):
@@ -164,9 +220,11 @@ def main():
 
     backoff = MIN_BACKOFF
     offline_wait = MIN_WAIT_SEC
+    fallback = None
     while not stop.is_set():
         if not is_live():
             log(f"source offline, reconnect attempt in {offline_wait}s")
+            fallback = ensure_fallback(fallback, rtmp)
             stop.wait(offline_wait)
             offline_wait = min(offline_wait * 2, MAX_WAIT_SEC)
             continue
@@ -175,38 +233,39 @@ def main():
         proc = start_ffmpeg(rtmp)
         started = time.monotonic()
         stalled = threading.Event()
-        threading.Thread(target=monitor_progress, args=(proc, stalled), daemon=True).start()
+        got_progress = threading.Event()
+        threading.Thread(target=monitor_progress, args=(proc, stalled, got_progress), daemon=True).start()
+
+        while not got_progress.is_set() and proc.poll() is None and not stop.is_set():
+            if time.monotonic() - started > 25:
+                break
+            stop.wait(1)
+
+        if got_progress.is_set() and fallback is not None and fallback.poll() is None:
+            stop_proc(fallback, "fallback")
+            fallback = None
+
         while proc.poll() is None and not stop.is_set():
             if stalled.wait(5):
                 log(f"no ffmpeg progress for {STALL_SECONDS}s, restarting")
-                proc.terminate()
-                try:
-                    proc.wait(30)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                stop_proc(proc, "ffmpeg")
                 break
             if RESTART_MINUTES and time.monotonic() - started > RESTART_MINUTES * 60:
                 log(f"scheduled restart after {RESTART_MINUTES} minutes")
-                proc.terminate()
-                try:
-                    proc.wait(30)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                stop_proc(proc, "ffmpeg")
                 break
 
         if stop.is_set():
-            proc.terminate()
-            try:
-                proc.wait(30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            stop_proc(proc, "ffmpeg")
+            stop_proc(fallback, "fallback")
             log("stopped")
             return
 
+        fallback = ensure_fallback(fallback, rtmp)
         rc = proc.returncode
         if rc == 0:
             log("stream ended naturally, checking source again")
-            backoff = 5
+            backoff = MIN_BACKOFF
         else:
             log(f"ffmpeg exited with code {rc}, retry in {backoff}s")
             stop.wait(backoff)
