@@ -85,7 +85,7 @@ def start_ffmpeg(rtmp):
     ]
     if DELAY_SECONDS > 0:
         segments = max(1, int(math.ceil(DELAY_SECONDS / SEGMENT_DURATION)))
-        cmd += ["-re", "-live_start_index", f"-{segments}"]
+        cmd += ["-live_start_index", f"-{segments}"]
         log(f"output delay enabled: ~{segments * SEGMENT_DURATION:.0f}s ({DELAY_SECONDS}s requested)")
     else:
         cmd += ["-live_start_index", "-3"]
